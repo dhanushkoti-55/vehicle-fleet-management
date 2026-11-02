@@ -1,6 +1,17 @@
 CREATE DATABASE IF NOT EXISTS vehicle_fleet_db;
 USE vehicle_fleet_db;
 
+DROP VIEW IF EXISTS vw_booking_amount;
+DROP TABLE IF EXISTS PENALTY;
+DROP TABLE IF EXISTS MAINTENANCE;
+DROP TABLE IF EXISTS PAYMENT;
+DROP TABLE IF EXISTS BOOKING;
+DROP TABLE IF EXISTS CUSTOMER_PHONE;
+DROP TABLE IF EXISTS CUSTOMER;
+DROP TABLE IF EXISTS DRIVER;
+DROP TABLE IF EXISTS VEHICLE;
+DROP TABLE IF EXISTS BRANCH;
+
 CREATE TABLE BRANCH (
     branch_id INT AUTO_INCREMENT PRIMARY KEY,
     branch_name VARCHAR(100) NOT NULL,
@@ -118,11 +129,6 @@ SELECT
 FROM BOOKING b
 JOIN VEHICLE v ON b.vehicle_id = v.vehicle_id;
 
-CREATE INDEX idx_vehicle_cat_status_rate
-ON VEHICLE(category, status, base_rate);
-
-CREATE INDEX idx_booking_cust_status
-ON BOOKING(customer_id, booking_status, due_date);
-
-CREATE INDEX idx_customer_lookup
-ON CUSTOMER(email, license_no);
+CREATE INDEX idx_vehicle_cat_status_rate ON VEHICLE(category, status, base_rate);
+CREATE INDEX idx_booking_cust_status ON BOOKING(customer_id, booking_status, due_date);
+CREATE INDEX idx_customer_lookup ON CUSTOMER(email, license_no);
