@@ -1,186 +1,140 @@
 USE vehicle_fleet_db;
 
-DELIMITER $$
+-- 1. Available SUVs under a selected daily rate.
+SELECT vehicle_id, reg_number, brand, model, base_rate
+FROM VEHICLE
+WHERE category = 'SUV'
+  AND status = 'Available'
+  AND base_rate <= 4000.00
+ORDER BY base_rate;
 
-DROP FUNCTION IF EXISTS fn_calculate_overdue_penalty $$
-CREATE FUNCTION fn_calculate_overdue_penalty(
-    p_due_date DATE,
-    p_return_date DATE
-)
-RETURNS DECIMAL(10,2)
-DETERMINISTIC
-BEGIN
-    DECLARE v_penalty DECIMAL(10,2) DEFAULT 0.00;
-    IF p_return_date > p_due_date THEN
-        SET v_penalty = DATEDIFF(p_return_date, p_due_date) * 300.00;
-    END IF;
-    RETURN v_penalty;
-END $$
+-- 2. Fleet utilization and average base rate by category.
+SELECT category,
+       COUNT(*) AS total_vehicles,
+       SUM(status = 'Rented') AS rented_vehicles,
+       ROUND(AVG(base_rate), 2) AS average_daily_rate,
+       ROUND(100 * SUM(status = 'Rented') / NULLIF(COUNT(*), 0), 2) AS current_rental_share_pct
+FROM VEHICLE
+GROUP BY category
+HAVING COUNT(*) > 0;
 
-DROP PROCEDURE IF EXISTS sp_create_rental_booking $$
-CREATE PROCEDURE sp_create_rental_booking(
-    IN p_customer_id INT,
-    IN p_vehicle_id INT,
-    IN p_driver_id INT,
-    IN p_start_date DATE,
-    IN p_due_date DATE,
-    OUT p_booking_id INT,
-    OUT p_total_amount DECIMAL(10,2)
-)
-BEGIN
-    DECLARE v_status VARCHAR(20);
-    DECLARE v_rate DECIMAL(10,2);
-    DECLARE v_category VARCHAR(20);
-    DECLARE v_multiplier DECIMAL(3,2) DEFAULT 1.00;
-    DECLARE v_days INT;
-    DECLARE v_count INT;
+-- 3. Complete booking statement: INNER JOIN, LEFT JOIN and aggregate payments.
+SELECT b.booking_id,
+       CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+       c.email,
+       v.reg_number,
+       CONCAT(v.brand, ' ', v.model) AS vehicle_name,
+       br.branch_name,
+       COALESCE(d.driver_name, 'Self-Drive') AS assigned_driver,
+       b.start_date,
+       b.due_date,
+       ba.total_amount,
+       COALESCE(SUM(p.amount), 0.00) AS total_paid,
+       ROUND(ba.total_amount - COALESCE(SUM(p.amount), 0.00), 2) AS balance_due
+FROM BOOKING b
+JOIN CUSTOMER c ON c.customer_id = b.customer_id
+JOIN VEHICLE v ON v.vehicle_id = b.vehicle_id
+JOIN BRANCH br ON br.branch_id = v.branch_id
+LEFT JOIN DRIVER d ON d.driver_id = b.driver_id
+JOIN vw_booking_amount ba ON ba.booking_id = b.booking_id
+LEFT JOIN PAYMENT p ON p.booking_id = b.booking_id
+GROUP BY b.booking_id, c.first_name, c.last_name, c.email,
+         v.reg_number, v.brand, v.model, br.branch_name,
+         d.driver_name, b.start_date, b.due_date, ba.total_amount
+ORDER BY b.booking_id DESC;
 
-    DECLARE EXIT HANDLER FOR SQLEXCEPTION
-    BEGIN
-        ROLLBACK;
-        RESIGNAL;
-    END;
+-- 4. RIGHT JOIN example: include branches even when they have no vehicles.
+SELECT br.branch_id, br.branch_name, v.vehicle_id, v.reg_number
+FROM VEHICLE v
+RIGHT JOIN BRANCH br ON br.branch_id = v.branch_id
+ORDER BY br.branch_id, v.vehicle_id;
 
-    START TRANSACTION;
+-- 5. SELF JOIN example: drivers belonging to the same branch.
+SELECT d1.driver_name AS driver_one,
+       d2.driver_name AS driver_two,
+       d1.branch_id
+FROM DRIVER d1
+JOIN DRIVER d2
+  ON d1.branch_id = d2.branch_id
+ AND d1.driver_id < d2.driver_id;
 
-    IF p_due_date < p_start_date THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Invalid booking dates';
-    END IF;
+-- 6. Nested subquery: customers with spending above the overall average customer spend.
+SELECT c.customer_id, c.first_name, c.last_name, c.email, s.total_spent
+FROM CUSTOMER c
+JOIN vw_customer_total_spent s ON s.customer_id = c.customer_id
+WHERE s.total_spent > (
+    SELECT AVG(total_spent)
+    FROM vw_customer_total_spent
+);
 
-    SELECT COUNT(*) INTO v_count
-    FROM VEHICLE
-    WHERE vehicle_id = p_vehicle_id;
+-- 7. EXISTS: customers who have at least one active booking.
+SELECT c.customer_id, c.first_name, c.last_name
+FROM CUSTOMER c
+WHERE EXISTS (
+    SELECT 1
+    FROM BOOKING b
+    WHERE b.customer_id = c.customer_id
+      AND b.booking_status = 'Active'
+);
 
-    IF v_count = 0 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Vehicle does not exist';
-    END IF;
+-- 8. NOT EXISTS: vehicles that have never undergone maintenance.
+SELECT v.vehicle_id, v.reg_number, v.brand, v.model
+FROM VEHICLE v
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM MAINTENANCE m
+    WHERE m.vehicle_id = v.vehicle_id
+);
 
-    SELECT status, base_rate, category
-    INTO v_status, v_rate, v_category
-    FROM VEHICLE
-    WHERE vehicle_id = p_vehicle_id
-    FOR UPDATE;
+-- 9. Monthly revenue by branch (payments are recognized on payment date).
+SELECT br.branch_id,
+       br.branch_name,
+       DATE_FORMAT(p.payment_date, '%Y-%m') AS revenue_month,
+       SUM(p.amount) AS collected_revenue
+FROM PAYMENT p
+JOIN BOOKING b ON b.booking_id = p.booking_id
+JOIN VEHICLE v ON v.vehicle_id = b.vehicle_id
+JOIN BRANCH br ON br.branch_id = v.branch_id
+GROUP BY br.branch_id, br.branch_name, DATE_FORMAT(p.payment_date, '%Y-%m')
+ORDER BY revenue_month DESC, br.branch_name;
 
-    IF v_status != 'Available' THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Vehicle is not available';
-    END IF;
+-- 10. Overdue active rentals and their estimated penalty.
+SELECT b.booking_id,
+       CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+       v.reg_number,
+       b.due_date,
+       DATEDIFF(CURDATE(), b.due_date) AS days_overdue,
+       fn_calculate_overdue_penalty(b.due_date, CURDATE()) AS estimated_penalty
+FROM BOOKING b
+JOIN CUSTOMER c ON c.customer_id = b.customer_id
+JOIN VEHICLE v ON v.vehicle_id = b.vehicle_id
+WHERE b.booking_status = 'Active'
+  AND b.due_date < CURDATE()
+ORDER BY b.due_date;
 
-    IF v_category = 'SUV' THEN
-        SET v_multiplier = 1.25;
-    ELSEIF v_category = 'Luxury' THEN
-        SET v_multiplier = 1.75;
-    END IF;
+-- 11. View-based customer lifetime payments.
+SELECT customer_id, customer_name, total_spent
+FROM vw_customer_total_spent
+ORDER BY total_spent DESC;
 
-    SET v_days = DATEDIFF(p_due_date, p_start_date) + 1;
-    SET p_total_amount = v_rate * v_days * v_multiplier;
+-- 12. View-based fleet utilization over the last 365 days.
+SELECT vehicle_id, reg_number, utilization_rate
+FROM vw_vehicle_utilization
+ORDER BY utilization_rate DESC;
 
-    IF p_driver_id IS NOT NULL THEN
-        SET p_total_amount = p_total_amount + (500.00 * v_days);
-    END IF;
+-- 13. UNION: combined list of available and maintenance vehicles.
+SELECT vehicle_id, reg_number, status
+FROM VEHICLE
+WHERE status = 'Available'
+UNION
+SELECT vehicle_id, reg_number, status
+FROM VEHICLE
+WHERE status = 'Maintenance';
 
-    INSERT INTO BOOKING
-    (customer_id, vehicle_id, driver_id, start_date, due_date, booking_status)
-    VALUES
-    (p_customer_id, p_vehicle_id, p_driver_id, p_start_date, p_due_date, 'Active');
-
-    SET p_booking_id = LAST_INSERT_ID();
-
-    COMMIT;
-END $$
-
-DROP TRIGGER IF EXISTS trg_after_booking_insert $$
-CREATE TRIGGER trg_after_booking_insert
-AFTER INSERT ON BOOKING
-FOR EACH ROW
-BEGIN
-    IF NEW.booking_status = 'Active' THEN
-        UPDATE VEHICLE
-        SET status = 'Rented'
-        WHERE vehicle_id = NEW.vehicle_id;
-    END IF;
-END $$
-
-DROP TRIGGER IF EXISTS trg_after_booking_return $$
-CREATE TRIGGER trg_after_booking_return
-AFTER UPDATE ON BOOKING
-FOR EACH ROW
-BEGIN
-    DECLARE v_penalty DECIMAL(10,2);
-    DECLARE v_penalty_id INT;
-
-    IF NEW.booking_status = 'Completed' AND OLD.booking_status != 'Completed' THEN
-        IF NEW.return_date IS NOT NULL AND NEW.return_date > NEW.due_date THEN
-            SET v_penalty = fn_calculate_overdue_penalty(NEW.due_date, NEW.return_date);
-
-            IF v_penalty > 0 THEN
-                SELECT COALESCE(MAX(penalty_id), 0) + 1
-                INTO v_penalty_id
-                FROM PENALTY
-                WHERE booking_id = NEW.booking_id;
-
-                INSERT INTO PENALTY (booking_id, penalty_id, reason, penalty_amount)
-                VALUES (NEW.booking_id, v_penalty_id, 'Late return overdue charges', v_penalty);
-            END IF;
-        END IF;
-
-        UPDATE VEHICLE
-        SET status = 'Available'
-        WHERE vehicle_id = NEW.vehicle_id;
-    END IF;
-END $$
-
-DROP TRIGGER IF EXISTS trg_after_maintenance_insert $$
-CREATE TRIGGER trg_after_maintenance_insert
-AFTER INSERT ON MAINTENANCE
-FOR EACH ROW
-BEGIN
-    UPDATE VEHICLE
-    SET status = 'Maintenance'
-    WHERE vehicle_id = NEW.vehicle_id;
-END $$
-
-DELIMITER ;
-
--- ================= SEED DATA =================
-INSERT INTO BRANCH (branch_name, city, phone) VALUES
-('Vellore Main Branch', 'Vellore', '9876543210'),
-('Chennai Central Branch', 'Chennai', '9876543211');
-
-INSERT INTO VEHICLE (reg_number, category, brand, model, branch_id, base_rate, status) VALUES
-('TN23AB1234', 'Economy', 'Maruti', 'Swift', 1, 1500.00, 'Available'),
-('TN23CD5678', 'Sedan', 'Honda', 'City', 1, 2500.00, 'Rented'),
-('TN01EF9012', 'SUV', 'Hyundai', 'Creta', 2, 3000.00, 'Available'),
-('TN01GH3456', 'Luxury', 'BMW', 'X5', 2, 6000.00, 'Available');
-
-INSERT INTO DRIVER (driver_name, license_no, branch_id, rating) VALUES
-('Arun Kumar', 'DL10001', 1, 4.50),
-('Rahul Sharma', 'DL10002', 2, 4.80);
-
-INSERT INTO CUSTOMER (first_name, last_name, email, license_no) VALUES
-('Dhanush', 'Koti', 'dhanush@example.com', 'CL10001'),
-('Inderdeep', 'Singh', 'inderdeep@example.com', 'CL10002'),
-('Arjun', 'Reddy', 'arjun@example.com', 'CL10003');
-
-INSERT INTO CUSTOMER_PHONE (customer_id, phone_number) VALUES
-(1, '9000000001'),
-(1, '9000000002'),
-(2, '9000000003'),
-(3, '9000000004');
-
-INSERT INTO BOOKING (customer_id, vehicle_id, driver_id, start_date, due_date, return_date, booking_status) VALUES
-(1, 1, NULL, '2026-10-20', '2026-10-22', '2026-10-22', 'Completed'),
-(2, 2, 1, '2026-11-01', '2026-11-05', NULL, 'Active'),
-(3, 3, 2, '2026-11-04', '2026-11-06', NULL, 'Pending');
-
-INSERT INTO PAYMENT (booking_id, payment_id, amount, payment_mode) VALUES
-(1, 1, 4500.00, 'UPI'),
-(2, 1, 3000.00, 'Cash');
-
-INSERT INTO MAINTENANCE (vehicle_id, maintenance_id, service_date, cost) VALUES
-(1, 1, '2026-10-25', 2500.00);
-
-INSERT INTO PENALTY (booking_id, penalty_id, reason, penalty_amount) VALUES
-(1, 1, 'Late return', 300.00);
+-- 14. EXPLAIN: inspect the fleet search access path after indexes exist.
+EXPLAIN
+SELECT vehicle_id, reg_number, brand, model, base_rate
+FROM VEHICLE
+WHERE category = 'SUV'
+  AND status = 'Available'
+  AND base_rate <= 4000.00;
