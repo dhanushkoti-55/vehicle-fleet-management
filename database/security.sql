@@ -24,12 +24,15 @@ GRANT EXECUTE ON PROCEDURE vehicle_fleet_db.sp_record_payment TO 'rental_clerk_r
 
 -- Fleet manager: fleet, driver, booking, maintenance, payment and penalty reporting.
 GRANT SELECT ON vehicle_fleet_db.* TO 'fleet_manager_role';
+GRANT INSERT, UPDATE ON vehicle_fleet_db.CUSTOMER TO 'fleet_manager_role';
+GRANT INSERT, UPDATE ON vehicle_fleet_db.CUSTOMER_PHONE TO 'fleet_manager_role';
 GRANT INSERT, UPDATE ON vehicle_fleet_db.VEHICLE TO 'fleet_manager_role';
 GRANT INSERT, UPDATE ON vehicle_fleet_db.DRIVER TO 'fleet_manager_role';
 GRANT UPDATE ON vehicle_fleet_db.BOOKING TO 'fleet_manager_role';
 GRANT EXECUTE ON PROCEDURE vehicle_fleet_db.sp_create_rental_booking TO 'fleet_manager_role';
 GRANT EXECUTE ON PROCEDURE vehicle_fleet_db.sp_record_payment TO 'fleet_manager_role';
 GRANT EXECUTE ON PROCEDURE vehicle_fleet_db.sp_list_overdue_bookings TO 'fleet_manager_role';
+GRANT EXECUTE ON PROCEDURE vehicle_fleet_db.sp_log_maintenance TO 'fleet_manager_role';
 
 -- Workshop supervisor: maintenance logging and status restoration only.
 GRANT SELECT ON vehicle_fleet_db.BRANCH TO 'workshop_supervisor_role';
