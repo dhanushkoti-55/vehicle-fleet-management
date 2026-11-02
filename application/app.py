@@ -358,7 +358,7 @@ elif page == "Bookings":
             selected = st.selectbox("Active booking", list(labels))
             return_date = st.date_input(
                 "Actual return date",
-                value=date.today(),
+                value=max(date.today(), labels[selected][1]),
                 min_value=labels[selected][1],
             )
             submitted = st.form_submit_button("Complete booking")
