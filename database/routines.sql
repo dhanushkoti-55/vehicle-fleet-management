@@ -28,13 +28,15 @@ CREATE PROCEDURE sp_create_rental_booking(
     OUT p_total_amount DECIMAL(10,2),
     OUT p_status_message VARCHAR(100)
 )
-proc_label: BEGIN
+BEGIN
     DECLARE v_status VARCHAR(20);
     DECLARE v_rate DECIMAL(10,2);
     DECLARE v_category VARCHAR(20);
     DECLARE v_multiplier DECIMAL(3,2) DEFAULT 1.00;
     DECLARE v_days INT;
+    DECLARE v_vehicle_missing BOOLEAN DEFAULT FALSE;
 
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_vehicle_missing = TRUE;
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
@@ -56,6 +58,10 @@ proc_label: BEGIN
       FROM VEHICLE
      WHERE vehicle_id = p_vehicle_id
      FOR UPDATE;
+
+    IF v_vehicle_missing THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Vehicle does not exist';
+    END IF;
 
     IF v_status <> 'Available' THEN
         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Vehicle is not available';
@@ -97,10 +103,12 @@ CREATE PROCEDURE sp_record_payment(
     OUT p_balance_due DECIMAL(10,2)
 )
 BEGIN
-    DECLARE v_booking_exists INT DEFAULT 0;
+    DECLARE v_booking_id INT;
     DECLARE v_total DECIMAL(10,2);
     DECLARE v_paid DECIMAL(10,2);
+    DECLARE v_booking_missing BOOLEAN DEFAULT FALSE;
 
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_booking_missing = TRUE;
     DECLARE EXIT HANDLER FOR SQLEXCEPTION
     BEGIN
         ROLLBACK;
@@ -116,18 +124,14 @@ BEGIN
 
     START TRANSACTION;
 
-    SELECT COUNT(*) INTO v_booking_exists
-      FROM BOOKING
-     WHERE booking_id = p_booking_id;
-
-    IF v_booking_exists = 0 THEN
-        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Booking does not exist';
-    END IF;
-
-    SELECT booking_id INTO v_booking_exists
+    SELECT booking_id INTO v_booking_id
       FROM BOOKING
      WHERE booking_id = p_booking_id
      FOR UPDATE;
+
+    IF v_booking_missing THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Booking does not exist';
+    END IF;
 
     SELECT total_amount INTO v_total
       FROM vw_booking_amount
@@ -149,6 +153,55 @@ BEGIN
     VALUES (p_booking_id, p_payment_id, p_amount, p_payment_mode);
 
     SET p_balance_due = ROUND(v_total - v_paid - p_amount, 2);
+    COMMIT;
+END $$
+
+DROP PROCEDURE IF EXISTS sp_log_maintenance $$
+CREATE PROCEDURE sp_log_maintenance(
+    IN p_vehicle_id INT,
+    IN p_service_date DATE,
+    IN p_cost DECIMAL(10,2),
+    OUT p_maintenance_id INT
+)
+BEGIN
+    DECLARE v_status VARCHAR(20);
+    DECLARE v_vehicle_missing BOOLEAN DEFAULT FALSE;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET v_vehicle_missing = TRUE;
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SET p_maintenance_id = NULL;
+
+    IF p_service_date IS NULL OR p_cost IS NULL OR p_cost < 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Invalid maintenance date or cost';
+    END IF;
+
+    START TRANSACTION;
+
+    SELECT status INTO v_status
+      FROM VEHICLE
+     WHERE vehicle_id = p_vehicle_id
+     FOR UPDATE;
+
+    IF v_vehicle_missing THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Vehicle does not exist';
+    END IF;
+
+    IF v_status = 'Rented' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'A rented vehicle cannot enter maintenance';
+    END IF;
+
+    SELECT COALESCE(MAX(maintenance_id), 0) + 1 INTO p_maintenance_id
+      FROM MAINTENANCE
+     WHERE vehicle_id = p_vehicle_id;
+
+    INSERT INTO MAINTENANCE (vehicle_id, maintenance_id, service_date, cost)
+    VALUES (p_vehicle_id, p_maintenance_id, p_service_date, p_cost);
+
     COMMIT;
 END $$
 
