@@ -1,163 +1,177 @@
 # Vehicle Rental & Fleet Management System
 
-An enterprise-grade DBMS project designed to manage vehicle rental operations across multiple branches. The system uses a relational database to manage vehicles, customers, bookings, drivers, payments, maintenance, and penalties.
-
-## Project Overview
-
-The Vehicle Rental & Fleet Management System provides a centralized database for managing rental operations efficiently.
-
-It helps administrators maintain vehicle records, manage customer bookings, track payments, assign drivers, and monitor vehicle maintenance.
+A MySQL 8.0 and Python/Streamlit DBMS project for multi-branch vehicle rental operations. It manages branches, vehicles, drivers, customers, bookings, payment installments, maintenance, and late-return penalties.
 
 ## Features
 
-- Multi-branch vehicle management
-- Customer registration and management
-- Customer phone number management
-- Vehicle booking and rental management
-- Driver assignment
-- Payment tracking
-- Vehicle maintenance records
-- Penalty management
-- Automated database operations using triggers
-- Stored procedures and functions
-- Transaction management and savepoints
-- Database indexing and query optimization
-- Role-based access control
+- Nine normalized relations with primary keys, foreign keys, unique constraints and CHECK constraints
+- Multi-branch vehicle and driver records
+- Customer profiles with multiple phone numbers in a separate relation
+- Transaction-safe vehicle booking with row locking
+- Dynamic rental billing based on vehicle category and driver selection
+- Multiple payment installments and outstanding balance calculation
+- Automatic vehicle status synchronization
+- Automatic ₹300-per-day late-return penalties
+- Maintenance logging and vehicle status locks
+- Stored procedures, a user-defined function, triggers and a cursor
+- Views for booking totals, available fleet, customer spending and utilization
+- Indexes and EXPLAIN query plans
+- MySQL roles for least-privilege access
+- Streamlit dashboard for day-to-day operations
 
-## Database Design
-
-The database consists of the following nine relations:
-
-| Table | Description |
-|---|---|
-| BRANCH | Stores branch details |
-| VEHICLE | Stores vehicle information |
-| DRIVER | Stores driver details |
-| CUSTOMER | Stores customer information |
-| CUSTOMER_PHONE | Stores customer contact numbers |
-| BOOKING | Stores vehicle booking details |
-| PAYMENT | Stores payment transactions |
-| MAINTENANCE | Stores vehicle maintenance records |
-| PENALTY | Stores penalties associated with bookings |
-
-## DBMS Concepts Implemented
-
-- Entity Relationship (ER) Model
-- Relational Database Model
-- Primary and Foreign Keys
-- Integrity Constraints
-- Functional Dependencies
-- Normalization up to BCNF
-- SQL Joins and Subqueries
-- Views
-- Stored Procedures
-- Functions
-- Triggers
-- Cursors
-- Transactions
-- Commit and Rollback
-- Savepoints
-- Indexing
-- Query Execution Plans
-- Role-Based Access Control
-
-## Technologies Used
-
-| Technology | Purpose |
-|---|---|
-| MySQL / PostgreSQL | Relational database management |
-| SQL | Database operations |
-| Python | Application development |
-| Streamlit | User interface |
-| MySQL Connector / Database Driver | Database connectivity |
-
-## Project Structure
+## Repository structure
 
 ```text
 vehicle-fleet-management/
-│
-├── README.md
-├── database/
-│   ├── schema.sql
-│   └── queries.sql
-│
 ├── application/
 │   ├── app.py
 │   └── db_connection.py
-│
-└── documentation/
-    └── project_report.pdf
+├── database/
+│   ├── schema.sql
+│   ├── routines.sql
+│   ├── seed.sql
+│   ├── queries.sql
+│   ├── security.sql
+│   ├── transaction_examples.sql
+│   ├── validate.sql
+│   ├── demo_outputs.sql
+│   └── demo_workflows.sql
+├── documentation/
+│   └── Vehicle_Rental_DBMS_Project_Report.pdf
+├── tests/
+│   └── test_project_contract.py
+├── .streamlit/
+│   └── secrets.toml.example
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
 ```
 
-*Note: This is a suggested structure. Actual filenames may differ.*
+## 1. Database setup using MySQL Workbench
 
-## Installation and Setup
+Use MySQL Server 8.0. Open MySQL Workbench and connect to your local MySQL server.
 
-### 1. Clone the Repository
+Run the SQL files in this order:
+
+1. `database/schema.sql` — creates the database, nine tables, indexes and views. **This script drops and recreates the project tables. Do not run it on data you need to keep.**
+2. `database/routines.sql` — creates the stored procedures, function and triggers.
+3. `database/seed.sql` — inserts sample branches, vehicles, drivers, customers, bookings, payments and maintenance records.
+4. `database/validate.sql` — checks that the required tables, views, procedures, triggers and sample workflows exist.
+5. `database/demo_outputs.sql` — runs read-only SELECT queries to display the project outputs.
+
+To demonstrate actual business logic, run `database/demo_workflows.sql` after the setup. It creates a demonstration booking, records a payment, processes a late return, shows the generated penalty, logs maintenance and restores the vehicle. It inserts records into the database, so do not run it repeatedly unless you want additional demo records.
+
+Run `database/transaction_examples.sql` to demonstrate transaction control and SAVEPOINT rollback.
+
+Run `database/queries.sql` for the SQL query catalog covering filtering, grouping, joins, subqueries, views, UNION and EXPLAIN.
+
+Run `database/security.sql` only as a MySQL administrator. It creates database roles and grants role permissions. The example user-creation statements are commented; replace the example password with a unique secret before creating real database accounts.
+
+## 2. Run the Streamlit application locally
+
+Create a virtual environment and install dependencies:
 
 ```bash
-git clone https://github.com/dhanushkoti-55/vehicle-fleet-management.git
+python -m venv .venv
 ```
 
-### 2. Navigate to the Project Directory
+Windows:
+
+```powershell
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+macOS/Linux:
 
 ```bash
-cd vehicle-fleet-management
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 3. Set Up the Database
+Create `.streamlit/secrets.toml` using `.streamlit/secrets.toml.example`:
 
-- Install MySQL or PostgreSQL.
-- Create the project database.
-- Execute the SQL schema file.
-- Execute the required SQL queries and database objects.
+```toml
+[mysql]
+host = "127.0.0.1"
+port = 3306
+user = "YOUR_DATABASE_USERNAME"
+password = "YOUR_DATABASE_PASSWORD"
+database = "vehicle_fleet_db"
+```
 
-### 4. Install Python Dependencies
+Alternatively, configure the environment variables `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` and `DB_NAME`.
+
+Start Streamlit from the repository root:
 
 ```bash
-pip install streamlit mysql-connector-python
+streamlit run application/app.py
 ```
 
-Install any additional dependencies required by the application.
+## 3. Run with Docker Compose
 
-### 5. Configure Database Connection
-
-Update the database connection details in the application's configuration file.
-
-Do not upload database passwords or other sensitive credentials to GitHub.
-
-### 6. Run the Application
+Copy `.env.example` to `.env`, then set a strong local MySQL password in `.env`. Start both services:
 
 ```bash
-streamlit run app.py
+docker compose up --build
 ```
 
-## Project Objectives
+Open `http://localhost:8501`.
 
-1. Design a centralized relational database for vehicle rental operations.
-2. Maintain accurate records of vehicles, customers, and bookings.
-3. Manage payments, penalties, and maintenance activities.
-4. Implement database constraints to maintain data integrity.
-5. Apply normalization to reduce data redundancy.
-6. Use SQL programming concepts to automate database operations.
-7. Improve query performance through indexing and optimization.
+The MySQL container runs the schema, routines and seed scripts on the first initialization of its data volume. If you change the initialization SQL and need a completely fresh local database, remove the local volume only after confirming that you do not need its data:
 
-## Project Team
+```bash
+docker compose down -v
+docker compose up --build
+```
 
-- **Inderdeep Singh**
-- **M. Dhanush Koti**
+## 4. Streamlit Community Cloud deployment
 
-**Institution:** Vellore Institute of Technology (VIT), Vellore
+1. Push the project branch or merge it into the branch you intend to deploy.
+2. Create a Streamlit app and select `application/app.py` as the main file.
+3. Provision a MySQL 8.0 database that is reachable from the deployed application.
+4. In the Streamlit app settings, add the connection details under **Secrets**:
 
-**School:** School of Computer Science Engineering and Information Systems
+```toml
+[mysql]
+host = "YOUR_MANAGED_MYSQL_HOST"
+port = 3306
+user = "YOUR_DATABASE_USERNAME"
+password = "YOUR_DATABASE_PASSWORD"
+database = "vehicle_fleet_db"
+```
 
-**Academic Year:** 2026–2027
+5. Initialize the remote database by running `schema.sql`, `routines.sql` and `seed.sql` against that MySQL server.
+6. Redeploy the app.
 
-## Repository
+Streamlit Community Cloud does not create or host the MySQL database from the SQL files. The database must be provisioned separately. Never commit real database credentials, `.env`, or `.streamlit/secrets.toml` to GitHub.
 
-[Vehicle Rental & Fleet Management System – GitHub](https://github.com/dhanushkoti-55/vehicle-fleet-management)
+## 5. Test the project files
 
----
+From the repository root:
 
-**Project:** Vehicle Rental & Fleet Management System  
-**Domain:** Database Management Systems (DBMS)
+```bash
+python -m unittest discover -s tests -v
+```
+
+The tests check the repository's expected database objects and application integration. They do not replace running the SQL scripts against a live MySQL 8.0 server.
+
+## 6. Useful demonstration sequence
+
+For a DBMS project review, this sequence gives visible outputs:
+
+1. Run `schema.sql`, `routines.sql` and `seed.sql`.
+2. Run `validate.sql` and show the validation result.
+3. Run `demo_outputs.sql` and show the result grids for the nine relations, joins, views, aggregate queries and query plan.
+4. Run `demo_workflows.sql` and show the generated booking ID, calculated total, payment balance, late penalty, and vehicle status changes.
+5. Start Streamlit and demonstrate the Dashboard, Vehicles, Customers, Bookings, Payments, Maintenance, Penalties and Reports sections.
+
+## Project team
+
+- Inderdeep Singh
+- M. Dhanush Koti
+
+Vellore Institute of Technology, Vellore  
+School of Computer Science Engineering and Information Systems  
+Academic Year: 2026–2027
